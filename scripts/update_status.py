@@ -1,0 +1,24 @@
+# .github/workflows/rss-statuspage.yml
+name: RSS to Statuspage
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: pip install feedparser requests
+
+      - name: Update Statuspage components
+        env:
+          STATUSPAGE_API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
+          STATUSPAGE_PAGE_ID: ${{ secrets.STATUSPAGE_PAGE_ID }}
+          STATUSPAGE_COMPONENT_ID_ICE_ENCOMPASS: ${{ secrets.STATUSPAGE_COMPONENT_ID_ICE_ENCOMPASS }}
+        run: python scripts/update_status.py
