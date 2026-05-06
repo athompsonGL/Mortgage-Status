@@ -15,10 +15,10 @@ HEADERS = {
     "Content-Type": "application/json",
 }
 
-
 BAD_KEYWORDS = (
     r"maintenance|scheduled maintenance|special maintenance|outage|unavailable|"
-    r"down|latency|degraded|performance|incident|issue|disruption|interruption"
+    r"down|latency|degraded|performance|incident|issue|disruption|interruption|"
+    r"alert|advisory|systems affected"
 )
 
 
@@ -31,28 +31,43 @@ def clean_join(values):
     return " ".join(seen).strip()
 
 
-def is_informational_only(text: str) -> bool:
+def normalize_text(text):
+    return re.sub(r"\s+", " ", (text or "").strip())
+
+
+def is_informational_only(text):
     lowered = text.lower()
     return "informational message" in lowered and not re.search(BAD_KEYWORDS, lowered)
 
 
-def pick_relevant_rss_entry(feed) -> str:
-    for entry in feed.entries:
-        text = clean_join(
-            [
-                entry.get("title", ""),
-                entry.get("summary", ""),
-                entry.get("description", ""),
-            ]
-        )
+def pick_relevant_rss_entry(feed):
+    fallback_text = ""
 
-        if text and not is_informational_only(text):
+    for entry in feed.entries:
+        text = clean_join([
+            entry.get("title", ""),
+            entry.get("summary", ""),
+            entry.get("description", ""),
+        ])
+
+        if not text:
+            continue
+
+        lowered = text.lower()
+
+        if is_informational_only(text):
+            continue
+
+        if re.search(BAD_KEYWORDS, lowered):
             return text
 
-    return "Normal"
+        if not fallback_text:
+            fallback_text = text
+
+    return fallback_text or "Normal"
 
 
-def map_component_status(text: str) -> str:
+def map_component_status(text):
     lowered = text.lower()
 
     if re.search(r"\bnormal\b|operational", lowered):
@@ -64,14 +79,13 @@ def map_component_status(text: str) -> str:
     if re.search(r"outage|unavailable|down|service interruption|interruption", lowered):
         return "major_outage"
 
-    if re.search(r"latency|degraded|performance|incident|issue|disruption", lowered):
+    if re.search(r"latency|degraded|performance|incident|issue|disruption|alert|advisory|systems affected", lowered):
         return "degraded_performance"
 
-    # Safer for ICE feeds: informational/unknown should not create incidents
     return "operational"
 
 
-def map_incident_status(component_status: str) -> str:
+def map_incident_status(component_status):
     if component_status == "operational":
         return "resolved"
 
@@ -81,14 +95,14 @@ def map_incident_status(component_status: str) -> str:
     return "investigating"
 
 
-def get_component(component_id: str) -> dict:
+def get_component(component_id):
     url = f"https://api.statuspage.io/v1/pages/{STATUSPAGE_PAGE_ID}/components/{component_id}"
     response = requests.get(url, headers=HEADERS, timeout=15)
     response.raise_for_status()
     return response.json()
 
 
-def update_component(component_id: str, new_status: str):
+def update_component(component_id, new_status):
     url = f"https://api.statuspage.io/v1/pages/{STATUSPAGE_PAGE_ID}/components/{component_id}"
     response = requests.patch(
         url,
@@ -99,14 +113,21 @@ def update_component(component_id: str, new_status: str):
     response.raise_for_status()
 
 
-def get_unresolved_incidents() -> list:
+def get_unresolved_incidents():
     url = f"https://api.statuspage.io/v1/pages/{STATUSPAGE_PAGE_ID}/incidents/unresolved"
     response = requests.get(url, headers=HEADERS, timeout=15)
     response.raise_for_status()
     return response.json()
 
 
-def find_existing_incident(component_name: str) -> dict | None:
+def get_incident(incident_id):
+    url = f"https://api.statuspage.io/v1/pages/{STATUSPAGE_PAGE_ID}/incidents/{incident_id}"
+    response = requests.get(url, headers=HEADERS, timeout=15)
+    response.raise_for_status()
+    return response.json()
+
+
+def find_existing_incident(component_name):
     expected_prefix = f"[AUTO] {component_name}"
 
     for incident in get_unresolved_incidents():
@@ -116,7 +137,17 @@ def find_existing_incident(component_name: str) -> dict | None:
     return None
 
 
-def create_incident(component_name: str, component_id: str, component_status: str, message: str):
+def latest_incident_body(incident_id):
+    incident = get_incident(incident_id)
+    updates = incident.get("incident_updates", [])
+
+    if not updates:
+        return ""
+
+    return normalize_text(updates[0].get("body", ""))
+
+
+def create_incident(component_name, component_id, component_status, message):
     url = f"https://api.statuspage.io/v1/pages/{STATUSPAGE_PAGE_ID}/incidents"
 
     payload = {
@@ -138,19 +169,20 @@ def create_incident(component_name: str, component_id: str, component_status: st
     print(f"{component_name}: created incident")
 
 
-def update_incident(
-    incident_id: str,
-    component_name: str,
-    component_id: str,
-    component_status: str,
-    message: str,
-):
+def update_incident(incident_id, component_name, component_id, component_status, message):
+    current_body = latest_incident_body(incident_id)
+    new_body = normalize_text(message[:1000])
+
+    if current_body == new_body:
+        print(f"{component_name}: incident message unchanged, skipping update")
+        return
+
     url = f"https://api.statuspage.io/v1/pages/{STATUSPAGE_PAGE_ID}/incidents/{incident_id}"
 
     payload = {
         "incident": {
             "status": map_incident_status(component_status),
-            "body": message[:1000],
+            "body": new_body,
             "components": {
                 component_id: component_status
             }
@@ -159,10 +191,10 @@ def update_incident(
 
     response = requests.patch(url, headers=HEADERS, json=payload, timeout=15)
     response.raise_for_status()
-    print(f"{component_name}: updated incident")
+    print(f"{component_name}: updated incident message")
 
 
-def resolve_incident(incident_id: str, component_name: str, component_id: str):
+def resolve_incident(incident_id, component_name, component_id):
     url = f"https://api.statuspage.io/v1/pages/{STATUSPAGE_PAGE_ID}/incidents/{incident_id}"
 
     payload = {
@@ -180,7 +212,7 @@ def resolve_incident(incident_id: str, component_name: str, component_id: str):
     print(f"{component_name}: resolved incident")
 
 
-def process_feed(feed_config: dict):
+def process_feed(feed_config):
     name = feed_config["name"]
     rss_url = feed_config["rss_url"]
     component_env = feed_config["component_env"]
@@ -196,6 +228,7 @@ def process_feed(feed_config: dict):
         raise RuntimeError(f"No RSS entries found for {name}")
 
     latest_text = pick_relevant_rss_entry(feed)
+    latest_text = normalize_text(latest_text)
 
     print(f"{name}: selected RSS text: {latest_text}")
 
