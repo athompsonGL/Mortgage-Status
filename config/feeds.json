@@ -3,5 +3,10 @@
     "name": "Encompass",
     "rss_url": "https://www.ice.com/publicdocs/ice/status-center/rss/encompass.rss",
     "component_env": "ICE_ENCOMPASS"
-  }
+  },
+  {
+    "name": "Academy",
+    "rss_url": "https://www.ice.com/publicdocs/ice/status-center/rss/ice-mortgage-technology-academy.rss",
+    "component_env": "ICE_ACADEMY"
+  },
 ]
