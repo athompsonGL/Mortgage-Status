@@ -10,8 +10,13 @@ import requests
 STATUSPAGE_API_KEY = os.environ["STATUSPAGE_API_KEY"]
 STATUSPAGE_PAGE_ID = os.environ["STATUSPAGE_PAGE_ID"]
 
+HEADERS = {
+    "Authorization": f"OAuth {STATUSPAGE_API_KEY}",
+    "Content-Type": "application/json",
+}
 
-def map_status(text: str) -> str:
+
+def map_component_status(text: str) -> str:
     text = text.lower()
 
     if "normal" in text or "operational" in text:
@@ -26,41 +31,118 @@ def map_status(text: str) -> str:
     if re.search(r"latency|degraded|performance|incident|issue|disruption", text):
         return "degraded_performance"
 
-    # Safer fallback: do not mark operational if unsure
     return "degraded_performance"
 
 
-def update_component(component_name: str, component_id: str, new_status: str):
-    url = (
-        f"https://api.statuspage.io/v1/pages/"
-        f"{STATUSPAGE_PAGE_ID}/components/{component_id}"
-    )
+def map_incident_status(component_status: str) -> str:
+    if component_status == "operational":
+        return "resolved"
 
-    headers = {
-        "Authorization": f"OAuth {STATUSPAGE_API_KEY}",
-        "Content-Type": "application/json",
-    }
+    if component_status == "under_maintenance":
+        return "monitoring"
 
-    current_resp = requests.get(url, headers=headers, timeout=15)
-    current_resp.raise_for_status()
+    return "investigating"
 
-    current_status = current_resp.json()["status"]
 
-    print(f"{component_name}: current={current_status}, new={new_status}")
+def get_component(component_id: str) -> dict:
+    url = f"https://api.statuspage.io/v1/pages/{STATUSPAGE_PAGE_ID}/components/{component_id}"
+    response = requests.get(url, headers=HEADERS, timeout=15)
+    response.raise_for_status()
+    return response.json()
 
-    if current_status == new_status:
-        print(f"{component_name}: no change")
-        return
 
-    patch_resp = requests.patch(
+def update_component(component_id: str, new_status: str):
+    url = f"https://api.statuspage.io/v1/pages/{STATUSPAGE_PAGE_ID}/components/{component_id}"
+
+    response = requests.patch(
         url,
-        headers=headers,
+        headers=HEADERS,
         json={"component": {"status": new_status}},
         timeout=15,
     )
-    patch_resp.raise_for_status()
+    response.raise_for_status()
 
-    print(f"{component_name}: updated to {new_status}")
+
+def get_unresolved_incidents() -> list:
+    url = f"https://api.statuspage.io/v1/pages/{STATUSPAGE_PAGE_ID}/incidents/unresolved"
+    response = requests.get(url, headers=HEADERS, timeout=15)
+    response.raise_for_status()
+    return response.json()
+
+
+def find_existing_incident(component_name: str) -> dict | None:
+    incidents = get_unresolved_incidents()
+
+    expected_prefix = f"[AUTO] {component_name}"
+
+    for incident in incidents:
+        if incident.get("name", "").startswith(expected_prefix):
+            return incident
+
+    return None
+
+
+def create_incident(component_name: str, component_id: str, component_status: str, message: str):
+    url = f"https://api.statuspage.io/v1/pages/{STATUSPAGE_PAGE_ID}/incidents"
+
+    incident_name = f"[AUTO] {component_name} - Issue Detected"
+
+    payload = {
+        "incident": {
+            "name": incident_name,
+            "status": map_incident_status(component_status),
+            "body": message[:1000],
+            "components": {
+                component_id: component_status
+            },
+            "component_ids": [
+                component_id
+            ]
+        }
+    }
+
+    response = requests.post(url, headers=HEADERS, json=payload, timeout=15)
+    response.raise_for_status()
+
+    print(f"{component_name}: created incident")
+
+
+def update_incident(incident_id: str, component_name: str, component_id: str, component_status: str, message: str):
+    url = f"https://api.statuspage.io/v1/pages/{STATUSPAGE_PAGE_ID}/incidents/{incident_id}"
+
+    payload = {
+        "incident": {
+            "status": map_incident_status(component_status),
+            "body": message[:1000],
+            "components": {
+                component_id: component_status
+            }
+        }
+    }
+
+    response = requests.patch(url, headers=HEADERS, json=payload, timeout=15)
+    response.raise_for_status()
+
+    print(f"{component_name}: updated incident")
+
+
+def resolve_incident(incident_id: str, component_name: str, component_id: str):
+    url = f"https://api.statuspage.io/v1/pages/{STATUSPAGE_PAGE_ID}/incidents/{incident_id}"
+
+    payload = {
+        "incident": {
+            "status": "resolved",
+            "body": f"{component_name} has returned to normal.",
+            "components": {
+                component_id: "operational"
+            }
+        }
+    }
+
+    response = requests.patch(url, headers=HEADERS, json=payload, timeout=15)
+    response.raise_for_status()
+
+    print(f"{component_name}: resolved incident")
 
 
 def process_feed(feed_config: dict):
@@ -80,19 +162,52 @@ def process_feed(feed_config: dict):
 
     latest = feed.entries[0]
 
-    latest_text = " ".join(
-        [
-            latest.get("title", ""),
-            latest.get("summary", ""),
-            latest.get("description", ""),
-        ]
-    )
+    title = latest.get("title", "").strip()
+    summary = latest.get("summary", "").strip()
+    description = latest.get("description", "").strip()
+
+    latest_text = " ".join([title, summary, description]).strip()
 
     print(f"{name}: latest RSS text: {latest_text}")
 
-    new_status = map_status(latest_text)
+    new_status = map_component_status(latest_text)
+    component = get_component(component_id)
+    current_status = component["status"]
 
-    update_component(name, component_id, new_status)
+    print(f"{name}: current={current_status}, new={new_status}")
+
+    if current_status != new_status:
+        update_component(component_id, new_status)
+        print(f"{name}: component updated to {new_status}")
+    else:
+        print(f"{name}: component unchanged")
+
+    existing_incident = find_existing_incident(name)
+
+    if new_status == "operational":
+        if existing_incident:
+            resolve_incident(existing_incident["id"], name, component_id)
+        else:
+            print(f"{name}: no open incident to resolve")
+        return
+
+    incident_message = latest_text or f"{name} is reporting {new_status}"
+
+    if existing_incident:
+        update_incident(
+            existing_incident["id"],
+            name,
+            component_id,
+            new_status,
+            incident_message,
+        )
+    else:
+        create_incident(
+            name,
+            component_id,
+            new_status,
+            incident_message,
+        )
 
 
 def main():

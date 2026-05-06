@@ -1,4 +1,3 @@
-# .github/workflows/rss-statuspage.yml
 name: RSS to Statuspage
 
 on:
@@ -10,13 +9,16 @@ jobs:
   update:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
         run: pip install feedparser requests
 
-      - name: Update Statuspage components
+      - name: Update Statuspage from RSS
         env:
           STATUSPAGE_API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
           STATUSPAGE_PAGE_ID: ${{ secrets.STATUSPAGE_PAGE_ID }}
