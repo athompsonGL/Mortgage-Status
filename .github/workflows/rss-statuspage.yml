@@ -24,4 +24,5 @@ jobs:
           STATUSPAGE_PAGE_ID: ${{ secrets.STATUSPAGE_PAGE_ID }}
           ICE_ENCOMPASS: ${{ secrets.ICE_ENCOMPASS }}
           ICE_ACADEMY: ${{ secrets.ICE_ACADEMY }}
+          ICE_MSP: ${{ secrets.ICE_MSP }}
         run: python scripts/update_status.py

@@ -8,5 +8,10 @@
     "name": "Academy",
     "rss_url": "https://www.ice.com/publicdocs/ice/status-center/rss/ice-mortgage-technology-academy.rss",
     "component_env": "ICE_ACADEMY"
+  },
+  {
+    "name": "MSP",
+    "rss_url": "https://www.ice.com/publicdocs/ice/status-center/rss/msp-mortgage-servicing-system.rss",
+    "component_env": "ICE_MSP"
   }
 ]
