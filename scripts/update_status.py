@@ -35,36 +35,21 @@ def normalize_text(text):
     return re.sub(r"\s+", " ", (text or "").strip())
 
 
-def is_informational_only(text):
-    lowered = text.lower()
-    return "informational message" in lowered and not re.search(BAD_KEYWORDS, lowered)
-
-
 def pick_relevant_rss_entry(feed):
-    fallback_text = ""
+    channel_description = normalize_text(feed.feed.get("description", ""))
 
-    for entry in feed.entries:
-        text = clean_join([
+    if channel_description:
+        return channel_description
+
+    if feed.entries:
+        entry = feed.entries[0]
+        return clean_join([
             entry.get("title", ""),
             entry.get("summary", ""),
             entry.get("description", ""),
         ])
 
-        if not text:
-            continue
-
-        lowered = text.lower()
-
-        if is_informational_only(text):
-            continue
-
-        if re.search(BAD_KEYWORDS, lowered):
-            return text
-
-        if not fallback_text:
-            fallback_text = text
-
-    return fallback_text or "Normal"
+    return "Normal"
 
 
 def map_component_status(text):
@@ -224,11 +209,10 @@ def process_feed(feed_config):
 
     feed = feedparser.parse(rss_url)
 
-    if not feed.entries:
-        raise RuntimeError(f"No RSS entries found for {name}")
+    if not feed.entries and not feed.feed.get("description"):
+        raise RuntimeError(f"No RSS entries or channel description found for {name}")
 
-    latest_text = pick_relevant_rss_entry(feed)
-    latest_text = normalize_text(latest_text)
+    latest_text = normalize_text(pick_relevant_rss_entry(feed))
 
     print(f"{name}: selected RSS text: {latest_text}")
 
