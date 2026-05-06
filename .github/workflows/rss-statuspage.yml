@@ -20,5 +20,5 @@ jobs:
         env:
           STATUSPAGE_API_KEY: ${{ secrets.STATUSPAGE_API_KEY }}
           STATUSPAGE_PAGE_ID: ${{ secrets.STATUSPAGE_PAGE_ID }}
-          STATUSPAGE_COMPONENT_ID_ICE_ENCOMPASS: ${{ secrets.STATUSPAGE_COMPONENT_ID_ICE_ENCOMPASS }}
+          STATUSPAGE_COMPONENT_ID_ICE_ENCOMPASS: ${{ secrets.ICE_ENCOMPASS }}
         run: python scripts/update_status.py
